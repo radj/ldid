@@ -2,18 +2,19 @@
  * Copyright (C) 2007-2012  Jay Freeman (saurik)
 */
 
-/* GNU Lesser General Public License, Version 3 {{{ */
-/* This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+/* GNU Affero General Public License, Version 3 {{{ */
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- *
+
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
+ * GNU Affero General Public License for more details.
+
+ * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 **/
 /* }}} */
@@ -22,7 +23,9 @@
 #include "minimal/string.h"
 #include "minimal/mapping.h"
 
+extern "C" {
 #include "sha1.h"
+}
 
 #include <cstring>
 #include <string>
@@ -66,6 +69,7 @@ struct mach_header {
 
 #define MH_DYLDLINK   0x4
 
+#define MH_OBJECT     0x1
 #define MH_EXECUTE    0x2
 #define MH_DYLIB      0x6
 #define MH_BUNDLE     0x8
@@ -275,6 +279,22 @@ struct encryption_info_command {
     uint32_t cryptsize;
     uint32_t cryptid;
 } _packed;
+
+#define BIND_OPCODE_MASK                             0xf0
+#define BIND_IMMEDIATE_MASK                          0x0f
+#define BIND_OPCODE_DONE                             0x00
+#define BIND_OPCODE_SET_DYLIB_ORDINAL_IMM            0x10
+#define BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB           0x20
+#define BIND_OPCODE_SET_DYLIB_SPECIAL_IMM            0x30
+#define BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM    0x40
+#define BIND_OPCODE_SET_TYPE_IMM                     0x50
+#define BIND_OPCODE_SET_ADDEND_SLEB                  0x60
+#define BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB      0x70
+#define BIND_OPCODE_ADD_ADDR_ULEB                    0x80
+#define BIND_OPCODE_DO_BIND                          0x90
+#define BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB            0xa0
+#define BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED      0xb0
+#define BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB 0xc0
 
 uint16_t Swap_(uint16_t value) {
     return
@@ -928,13 +948,37 @@ int main(int argc, const char *argv[]) {
                 args.push_back(path);
 
                 _foreach (allocation, allocations) {
-                    args.push_back("-A");
+                    if (allocation.type_ == 12 && (
+                        allocation.subtype_ == 0 ||
+                        allocation.subtype_ == 6 ||
+                    false)) {
+                        // Telesphoreo codesign_allocate
+                        args.push_back("-a");
 
-                    asprintf(&arg, "%u", allocation.type_);
-                    args.push_back(arg);
+                        const char *arch;
+                        switch (allocation.subtype_) {
+                            case 0:
+                                arch = "arm";
+                                break;
+                            case 6:
+                                arch = "armv6";
+                                break;
+                            default:
+                                arch = NULL;
+                                break;
+                        }
 
-                    asprintf(&arg, "%u", allocation.subtype_);
-                    args.push_back(arg);
+                        _assert(arch != NULL);
+                        args.push_back(arch);
+                    } else {
+                        args.push_back("-A");
+
+                        asprintf(&arg, "%u", allocation.type_);
+                        args.push_back(arg);
+
+                        asprintf(&arg, "%u", allocation.subtype_);
+                        args.push_back(arg);
+                    }
 
                     size_t alloc(0);
                     alloc += sizeof(struct SuperBlob);
@@ -994,7 +1038,7 @@ int main(int argc, const char *argv[]) {
         if (flag_p)
             printf("path%zu='%s'\n", filei, file.c_str());
 
-        FatHeader fat_header(Map(temp == NULL ? path : temp, !(flag_R | flag_T | flag_s | flag_S | flag_O | flag_D)));
+        FatHeader fat_header(Map(temp == NULL ? path : temp, !(flag_R || flag_T || flag_s || flag_S || flag_O || flag_D)));
         struct linkedit_data_command *signature(NULL);
 
         _foreach (mach_header, fat_header.GetMachHeaders()) {
